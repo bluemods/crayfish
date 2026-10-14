@@ -660,9 +660,13 @@ internal class RealCropState(
     if (current.isEmpty || !current.isFinite) return
 
     // Shrink first, keeping the proportions so a locked aspect ratio survives, then slide inside.
-    val fit = minOf(1f, bounds.width / current.width, bounds.height / current.height)
-    val width = current.width * fit
-    val height = current.height * fit
+    val widthFit = minOf(1f, bounds.width / current.width)
+    val heightFit = minOf(1f, bounds.height / current.height)
+    val fixedAspectRatio = aspectRatio is AspectRatio.Fixed
+    val fitX = if (fixedAspectRatio) minOf(widthFit, heightFit) else widthFit
+    val fitY = if (fixedAspectRatio) minOf(widthFit, heightFit) else heightFit
+    val width = current.width * fitX
+    val height = current.height * fitY
     val centerX = current.left + current.width / 2f
     val centerY = current.top + current.height / 2f
     val next = FloatRect(
