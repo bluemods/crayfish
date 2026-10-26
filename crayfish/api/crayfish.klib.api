@@ -330,6 +330,7 @@ sealed interface com.github.skydoves.crayfish.ui/CropState { // com.github.skydo
         abstract fun <get-shape>(): com.github.skydoves.crayfish.ui/CropShape // com.github.skydoves.crayfish.ui/CropState.shape.<get-shape>|<get-shape>(){}[0]
         abstract fun <set-shape>(com.github.skydoves.crayfish.ui/CropShape) // com.github.skydoves.crayfish.ui/CropState.shape.<set-shape>|<set-shape>(com.github.skydoves.crayfish.ui.CropShape){}[0]
 
+    abstract fun applyRecipe(com.github.skydoves.crayfish.ui/CropRecipe) // com.github.skydoves.crayfish.ui/CropState.applyRecipe|applyRecipe(com.github.skydoves.crayfish.ui.CropRecipe){}[0]
     abstract fun reset() // com.github.skydoves.crayfish.ui/CropState.reset|reset(){}[0]
     abstract fun rotateBy(kotlin/Float) // com.github.skydoves.crayfish.ui/CropState.rotateBy|rotateBy(kotlin.Float){}[0]
     abstract fun rotateTo(kotlin/Float) // com.github.skydoves.crayfish.ui/CropState.rotateTo|rotateTo(kotlin.Float){}[0]

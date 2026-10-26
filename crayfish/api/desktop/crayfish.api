@@ -699,6 +699,7 @@ public final class com/github/skydoves/crayfish/ui/CropShape$RoundedRectangle : 
 }
 
 public abstract interface class com/github/skydoves/crayfish/ui/CropState {
+	public abstract fun applyRecipe (Lcom/github/skydoves/crayfish/ui/CropRecipe;)V
 	public abstract fun crop (Lcom/github/skydoves/crayfish/encode/EncodeOptions;Lcom/github/skydoves/crayfish/decode/DecodeBudget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun crop$default (Lcom/github/skydoves/crayfish/ui/CropState;Lcom/github/skydoves/crayfish/encode/EncodeOptions;Lcom/github/skydoves/crayfish/decode/DecodeBudget;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun cropToImage (Lcom/github/skydoves/crayfish/decode/DecodeBudget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

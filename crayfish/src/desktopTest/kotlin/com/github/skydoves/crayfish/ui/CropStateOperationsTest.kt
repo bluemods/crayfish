@@ -22,6 +22,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runComposeUiTest
 import com.github.skydoves.crayfish.decode.TestImages
 import com.github.skydoves.crayfish.geometry.CropCoverage
+import com.github.skydoves.crayfish.geometry.CropTransform
 import com.github.skydoves.crayfish.geometry.FloatRect
 import kotlin.math.abs
 import kotlin.test.Test
@@ -38,10 +39,13 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class CropStateOperationsTest {
 
-  private fun ComposeUiTest.readyState(): CropState {
+  private fun ComposeUiTest.readyState(initialRecipe: CropRecipe? = null): CropState {
     var state: CropState? = null
     setContent {
-      val cropState = rememberCropState(TestImages.source(TestImages.pngBytes()))
+      val cropState = rememberCropState(
+        source = TestImages.source(TestImages.pngBytes()),
+        initialRecipe = initialRecipe,
+      )
       state = cropState
       Cropper(state = cropState, modifier = Modifier.fillMaxSize())
     }
@@ -114,6 +118,35 @@ class CropStateOperationsTest {
     assertEquals(openingRect, state.cropRect)
   }
 
+  /**
+   * Applying the recipe a state was opened with puts it back where it opened.
+   *
+   * What a "reset" button needs when the screen opens on its own recipe rather than the library's
+   * default rectangle, which [CropState.reset] would go back to instead.
+   */
+  @Test
+  fun applyingTheOpeningRecipeReturnsToTheOpeningState() = runComposeUiTest {
+    val opening = CropRecipe(
+      transform = CropTransform(),
+      normalizedCropRect = FloatRect(0f, 0f, 1f, 1f),
+      aspectRatio = AspectRatio.Fixed(ratio = 1f),
+    )
+    val state = readyState(initialRecipe = opening)
+    waitForIdle()
+    val opened = state.recipe
+
+    state.aspectRatio = AspectRatio.Fixed(ratio = 2f)
+    state.rotateBy(45f)
+    state.toggleFlipHorizontal()
+    waitForIdle()
+    assertTrue(state.recipe != opened, "the fixture never changed, so applying proves nothing")
+
+    state.applyRecipe(opening)
+    waitForIdle()
+
+    assertEquals(opened, state.recipe)
+  }
+
   /** The image has to stay under the crop rectangle after every one of these. */
   @Test
   fun everyOperationLeavesTheCropRectangleCovered() = runComposeUiTest {
@@ -127,6 +160,15 @@ class CropStateOperationsTest {
       { state.toggleFlipVertical() },
       { state.rotateToNearestQuarterTurn() },
       { state.reset() },
+      {
+        state.applyRecipe(
+          CropRecipe(
+            transform = CropTransform(),
+            normalizedCropRect = FloatRect(0f, 0f, 1f, 1f),
+            aspectRatio = AspectRatio.Free,
+          ),
+        )
+      },
     ).forEachIndexed { index, operation ->
       operation()
       waitForIdle()

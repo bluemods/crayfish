@@ -183,6 +183,16 @@ public sealed interface CropState {
 
   /** Returns the transform and the crop rectangle to their opening state. */
   public fun reset()
+
+  /**
+   * Puts the transform, the crop rectangle and the [aspectRatio] back to [recipe].
+   *
+   * What [reset] is to the library's own opening state, this is to a caller's: a screen opened on
+   * an `initialRecipe` goes back to it by applying that same recipe again. The result is held to
+   * the same coverage rules as every other change, so a recipe written against another viewport
+   * is constrained to this one rather than trusted.
+   */
+  public fun applyRecipe(recipe: CropRecipe)
 }
 
 /**
@@ -426,6 +436,19 @@ internal class RealCropState(
     // And then coverage, unconditionally. `conformCropRectToAspectRatio` ends here too, but only
     // for a fixed ratio - under `AspectRatio.Free` it returns before doing anything, which left
     // reset as the one mutation that could uncover the frame and not put it back.
+    constrainImageToViewport()
+    constrainFrameToImage()
+  }
+
+  override fun applyRecipe(recipe: CropRecipe) {
+    currentAspectRatio = recipe.aspectRatio
+    transform = recipe.transform
+    normalizedCropRect = recipe.normalizedCropRect
+    // The rectangle is the caller's, so the opening pass must not replace it with the default.
+    opened = true
+    // The same steps, in the same order, as opening on a restored recipe, so applying the recipe
+    // the state was opened with lands exactly where it opened.
+    conformCropRectToAspectRatio()
     constrainImageToViewport()
     constrainFrameToImage()
   }
