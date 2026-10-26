@@ -681,17 +681,26 @@ internal class RealCropState(
    * to follow it.
    */
   internal fun constrainImageToViewport() {
-    if (viewportSize.isEmpty || imageSize.width <= 0) return
-    val space = coordinateSpace
-    if (!space.isValid) return
+    val placed = constrainedImageTransform()
+    if (placed != transform) transform = placed
+  }
 
-    val clampedScale = transform.scale.coerceAtLeast(1f)
-    val scaled = if (clampedScale ==
-      transform.scale
-    ) {
-      transform
+  /**
+   * Where [constrainImageToViewport] would put [candidate], without writing it.
+   *
+   * The one-finger pan lets the image run past this while the finger is down, rubber-banded, and
+   * needs to know how far past it is; the spring back on release needs to know where to land.
+   */
+  internal fun constrainedImageTransform(candidate: CropTransform = transform): CropTransform {
+    if (viewportSize.isEmpty || imageSize.width <= 0) return candidate
+    val space = coordinateSpace
+    if (!space.isValid) return candidate
+
+    val clampedScale = candidate.scale.coerceAtLeast(1f)
+    val scaled = if (clampedScale == candidate.scale) {
+      candidate
     } else {
-      transform.copy(scale = clampedScale)
+      candidate.copy(scale = clampedScale)
     }
     val frame = cropRect
     val coverRegion = if (holdsImageToFrame && frame.isFinite && !frame.isEmpty) {
@@ -699,14 +708,13 @@ internal class RealCropState(
     } else {
       FloatRect.of(viewportSize)
     }
-    val placed = scaled.copy(
+    return scaled.copy(
       offset = CropBounds.coerceOffset(
         transform = scaled,
         contentBounds = space.contentBounds,
         coverRegion = coverRegion,
       ),
     )
-    if (placed != transform) transform = placed
   }
 
   /**

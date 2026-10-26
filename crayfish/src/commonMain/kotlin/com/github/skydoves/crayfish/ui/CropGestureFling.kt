@@ -59,13 +59,20 @@ internal fun isFlingWorthwhile(velocity: Velocity): Boolean =
  * coverage correction may move the image between two frames, and a fling that wrote absolute values
  * would undo it.
  *
- * @param onDelta applies one frame's translation and returns whether the image actually moved.
- *   `false` stops the animation: the image is against its bounds and the remaining frames would be
- *   a no-op that keeps the frame clock busy for nothing.
+ * @param onDelta applies one frame's translation and returns whether the fling may go on. `false`
+ *   stops the animation: the image is against its bounds and the remaining frames would be a no-op
+ *   that keeps the frame clock busy for nothing.
+ * @return the velocity the fling still had when [onDelta] stopped it, which an overscrolling
+ *   cropper carries into the stretch past the edge; [Velocity.Zero] when it ran down on its own.
  */
-internal suspend fun animateCropFling(velocity: Velocity, onDelta: (FloatPoint) -> Boolean) {
+internal suspend fun animateCropFling(
+  velocity: Velocity,
+  onDelta: (FloatPoint) -> Boolean,
+): Velocity {
   val safe = finiteVelocity(velocity)
-  if (!isFlingWorthwhile(safe)) return
+  if (!isFlingWorthwhile(safe)) return Velocity.Zero
+
+  var stoppedWith = Velocity.Zero
 
   var previous = Offset.Zero
   val animation = AnimationState(
@@ -87,6 +94,10 @@ internal suspend fun animateCropFling(velocity: Velocity, onDelta: (FloatPoint) 
     // nothing and getting nothing is not the image being blocked, and treating it as such would
     // end every fling on the frame it started.
     if (delta == Offset.Zero) return@animateDecay
-    if (!onDelta(FloatPoint(delta.x, delta.y))) cancelAnimation()
+    if (!onDelta(FloatPoint(delta.x, delta.y))) {
+      stoppedWith = Velocity(velocity.x, velocity.y)
+      cancelAnimation()
+    }
   }
+  return finiteVelocity(stoppedWith)
 }

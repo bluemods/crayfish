@@ -53,6 +53,10 @@ import androidx.compose.runtime.Immutable
  *   Turning it on also changes what the image is held to: instead of the viewport, the image may
  *   slide anywhere that keeps the crop frame covered, so it can be panned at the fitted zoom
  *   rather than only once zoomed in. Two-finger panning follows the same rule while it is on.
+ * @property overscroll Whether the image gives at its bounds instead of stopping.
+ *   If overscroll is enabled, a pan, a pinch or a fling that reaches an edge will
+ *   continue to drag out of bounds with resistance, and will spring back inside its bounds
+ *   when finished. The crop frame never moves with the stretch.
  */
 @Immutable
 public data class CropGestures(
@@ -60,6 +64,7 @@ public data class CropGestures(
   val zoom: Boolean = false,
   val rotate: Boolean = false,
   val singleFingerPan: Boolean = false,
+  val overscroll: Boolean = false,
 ) {
 
   /**

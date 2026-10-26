@@ -154,7 +154,12 @@ internal class CropGestureNode(state: RealCropState, style: CropStyle, gestures:
     state.constrainFrameToImage()
   }
 
-  /** Stops a fling in flight, which is what a new finger on the screen means. */
+  /**
+   * Stops a fling or a spring back in flight, which is what a new finger on the screen means.
+   *
+   * A spring back stopped half way leaves the image out of bounds. That is deliberate: the gesture
+   * that cancelled it either picks the image up from there or, when it ends, springs it back again.
+   */
   internal fun cancelFling() {
     flingJob?.cancel()
     flingJob = null
@@ -163,17 +168,42 @@ internal class CropGestureNode(state: RealCropState, style: CropStyle, gestures:
   internal fun startFling(velocity: Velocity) {
     cancelFling()
     flingJob = coroutineScope.launch {
-      animateCropFling(velocity) { delta -> applyFlingStep(delta) }
+      val leftover = animateCropFling(velocity) { delta -> applyFlingStep(delta) }
+      // A fling that ran into the bounds with speed to spare carries it past them, rubber-banded,
+      // and springs back: the edge is felt instead of hit.
+      if (gestures.overscroll && leftover != Velocity.Zero) {
+        state.animateCropSettle(leftover)
+      }
     }
   }
 
-  /** @return whether the image actually moved; `false` ends the fling against its bounds. */
+  /**
+   * Springs the image back inside its bounds from wherever a rubber-banded gesture left it,
+   * carrying [velocity] into the motion.
+   *
+   * Shares [flingJob] with the fling, since the two are never wanted at once and a new touch has to
+   * stop either.
+   */
+  internal fun startSettle(velocity: Velocity) {
+    cancelFling()
+    flingJob = coroutineScope.launch { state.animateCropSettle(velocity) }
+  }
+
+  /**
+   * @return whether the fling may go on. `false` ends it against the image's bounds: as soon as
+   *   they clip it at all when overscroll is on, so its remaining speed goes into the stretch, and
+   *   only once it stops moving the image when it is off.
+   */
   private fun applyFlingStep(delta: FloatPoint): Boolean {
     val before = state.transform.offset
-    state.transform = state.transform.copy(offset = before + delta).sanitized()
-    state.constrainImageToViewport()
-    state.constrainFrameToImage()
-    return state.transform.offset != before
+    val wanted = before + delta
+    state.placeImage(state.transform.copy(offset = wanted), overscroll = false)
+    val after = state.transform.offset
+    return if (gestures.overscroll) {
+      after == wanted
+    } else {
+      after != before
+    }
   }
 
   override fun onAttach() {
@@ -324,6 +354,7 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
               origin = dragOrigin,
               totalDelta = (position - dragStart).toFloatPoint(),
               minimumSize = minimumSize,
+              overscroll = gestures.overscroll,
             )
           } else if (travelled && handle == null && gestures.singleFingerPan) {
             // A finger on no handle, or the one left behind when a pinch loses a finger. Claimed
@@ -350,7 +381,7 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
               val delta = (position - change.previousPosition).toFloatPoint()
               // The grid waits for the image to actually move. A pan against an image with no room
               // to go is still nothing happening, and the grid would say otherwise.
-              if (applyImagePan(state, delta)) {
+              if (applyImagePan(state, delta, gestures.overscroll)) {
                 state.isInteracting = true
               }
             }
@@ -376,10 +407,25 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
 
       // A fling is panning carried on after the fingers leave, so it is the pan flags that gate
       // it, not the claim.
-      if (claimed && (gestures.pan || pannedWithOneFinger)) {
-        // The bounded overload, and then `finiteVelocity` inside the fling: the clamp handles a
-        // velocity that is merely enormous, the guard handles one that is NaN.
-        node.startFling(velocityTracker.calculateVelocity(FLING_LIMIT))
+      val flings = claimed && (gestures.pan || pannedWithOneFinger)
+      // The bounded overload, and then `finiteVelocity` inside the fling: the clamp handles a
+      // velocity that is merely enormous, the guard handles one that is NaN.
+      val velocity = if (flings) {
+        velocityTracker.calculateVelocity(FLING_LIMIT)
+      } else {
+        Velocity.Zero
+      }
+      if (state.constrainedImageTransform() != state.transform) {
+        // Left out of bounds: by a rubber-banded gesture, or by a tap that caught a spring back
+        // half way. The spring back takes the place of the fling and keeps its speed, so a throw
+        // back towards the bounds is not wasted and a throw further out stretches further first.
+        if (gestures.overscroll) {
+          node.startSettle(velocity)
+        } else {
+          state.placeImage(state.transform, overscroll = false)
+        }
+      } else if (flings) {
+        node.startFling(velocity)
       }
     } finally {
       state.isInteracting = false
@@ -406,7 +452,7 @@ private fun applyImageTransform(
   val safeZoom = if (gestures.zoom && zoom.isFinite() && zoom > 0f) zoom else 1f
   val safeRotation = if (gestures.rotate && rotation.isFinite()) rotation else 0f
   val safePan = if (gestures.pan) pan.sanitized() else FloatPoint.Zero
-  val current = state.transform
+  val current = state.unresistedTransform(gestures.overscroll)
   val nextRaw = rawRotationDegrees + safeRotation
   val nextScale = (current.scale * safeZoom).coerceIn(MINIMUM_SCALE, MAXIMUM_SCALE)
 
@@ -415,26 +461,26 @@ private fun applyImageTransform(
   // is the error its KDoc names: wrong by (1 - ratio) times the pivot, accumulating over a gesture
   // into the image swimming out from under the fingers.
   val anchored = current.scaledAround(nextScale, centroid.sanitized(), state.coordinateSpace.pivot)
-  state.transform = anchored.copy(
-    offset = anchored.offset + safePan,
-    rotationDegrees = RotationSnap.snap(nextRaw),
-  ).sanitized()
-  // Any of the three can uncover a corner of the crop rectangle.
-  state.constrainImageToViewport()
-  state.constrainFrameToImage()
+  state.placeImage(
+    candidate = anchored.copy(
+      offset = anchored.offset + safePan,
+      rotationDegrees = RotationSnap.snap(nextRaw),
+    ),
+    overscroll = gestures.overscroll,
+  )
   return nextRaw
 }
 
 /**
- * Drags the image by [delta] with one finger, under the same constraints as a two-finger pan.
+ * Drags the image by [delta] with one finger, under the same constraints as a two-finger pan:
+ * stopped at the bounds, or rubber-banded past them when [overscroll] is on.
  *
  * @return whether the image actually moved.
  */
-private fun applyImagePan(state: RealCropState, delta: FloatPoint): Boolean {
+private fun applyImagePan(state: RealCropState, delta: FloatPoint, overscroll: Boolean): Boolean {
   val before = state.transform.offset
-  state.transform = state.transform.copy(offset = before + delta.sanitized()).sanitized()
-  state.constrainImageToViewport()
-  state.constrainFrameToImage()
+  val from = state.unresistedTransform(overscroll)
+  state.placeImage(from.copy(offset = from.offset + delta.sanitized()), overscroll)
   return state.transform.offset != before
 }
 
@@ -445,6 +491,7 @@ private fun applyCropDrag(
   origin: FloatRect,
   totalDelta: FloatPoint,
   minimumSize: Float,
+  overscroll: Boolean,
 ) {
   val viewport = state.viewportSize
   if (viewport.isEmpty) return
@@ -465,9 +512,10 @@ private fun applyCropDrag(
     right = resolved.right / viewport.width,
     bottom = resolved.bottom / viewport.height,
   )
-  // Moving or shrinking the rectangle uncovers the image exactly as panning it does.
-  state.constrainImageToViewport()
-  state.constrainFrameToImage()
+  // Moving or shrinking the rectangle uncovers the image exactly as panning it does. Through
+  // `placeImage` so that a drag that caught a spring back half way leaves the stretch for the
+  // spring back to finish, rather than snapping the image into place under the finger.
+  state.placeImage(state.unresistedTransform(overscroll), overscroll)
 }
 
 /**

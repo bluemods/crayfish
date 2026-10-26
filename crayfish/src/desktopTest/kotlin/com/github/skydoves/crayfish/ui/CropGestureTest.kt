@@ -1114,7 +1114,7 @@ class CropGestureTest {
     )
     waitForIdle()
 
-    // The edge is a hard stop, even while the finger is still down.
+    // Without overscroll the edge is a hard stop, even while the finger is still down.
     val breaker = slopBreaker(touchSlop)
     onNodeWithTag(TAG).performTouchInput {
       down(SCRIM)
@@ -1125,7 +1125,7 @@ class CropGestureTest {
       room,
       state.transform.offset.x,
       absoluteTolerance = 1f,
-      message = "the image should stop where its left edge meets the frame",
+      message = "without overscroll the image should stop where its left edge meets the frame",
     )
     onNodeWithTag(TAG).performTouchInput { up() }
     waitForIdle()
@@ -1242,6 +1242,132 @@ class CropGestureTest {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // 20. Overscroll
+  // ---------------------------------------------------------------------------------------------
+
+  /** With overscroll on, the edge gives while the finger is down and springs back on release. */
+  @Test
+  fun aOneFingerPanStretchesPastTheEdgeAndSpringsBack() = runComposeUiTest {
+    val state = cropState()
+    mount(state, gestures = OVERSCROLLING_SINGLE_FINGER_PAN)
+
+    val cropBefore = state.cropRect
+    val room = cropBefore.left
+    onNodeWithTag(TAG).performTouchInput { stretchFromScrim(touchSlop) }
+    val stretched = state.transform.offset.x
+    assertTrue(
+      stretched > room + 1f && stretched < 200f,
+      "past the edge the image should give, resisted, but its offset is $stretched",
+    )
+    assertRect(cropBefore, state.cropRect)
+
+    onNodeWithTag(TAG).performTouchInput { up() }
+    waitForIdle()
+    assertEquals(
+      room,
+      state.transform.offset.x,
+      absoluteTolerance = 1f,
+      message = "the image should spring back to where its left edge meets the frame",
+    )
+    assertRect(cropBefore, state.cropRect)
+  }
+
+  /** The same stretch for two fingers, held to the viewport rather than the frame. */
+  @Test
+  fun aTwoFingerPanStretchesPastTheEdgeAndSpringsBack() = runComposeUiTest {
+    val state = cropState()
+    mount(state, gestures = CropGestures.All.copy(overscroll = true))
+
+    // Fitted and held to the viewport, so there is no room at all: any movement is stretch.
+    onNodeWithTag(TAG).performTouchInput {
+      down(0, Offset(centerX - 40f, centerY))
+      down(1, Offset(centerX + 40f, centerY))
+      repeat(PAN_STEPS) {
+        updatePointerBy(0, Offset(PAN_STEP, 0f))
+        updatePointerBy(1, Offset(PAN_STEP, 0f))
+        move()
+      }
+    }
+    val stretched = state.transform.offset.x
+    assertTrue(
+      stretched < -1f && stretched > PAN_STEPS * PAN_STEP,
+      "past the edge the image should give, resisted, but its offset is $stretched",
+    )
+
+    onNodeWithTag(TAG).performTouchInput {
+      up(0)
+      up(1)
+    }
+    waitForIdle()
+    assertEquals(0f, state.transform.offset.x, absoluteTolerance = 1f)
+  }
+
+  /** A second finger joining a stretched pan carries the stretch on instead of snapping it away. */
+  @Test
+  fun aPinchThatJoinsAStretchedPanKeepsTheStretch() = runComposeUiTest {
+    val state = cropState()
+    mount(state, gestures = OVERSCROLLING_SINGLE_FINGER_PAN)
+
+    val room = state.cropRect.left
+    onNodeWithTag(TAG).performTouchInput { stretchFromScrim(touchSlop) }
+    val stretched = state.transform.offset.x
+    assertTrue(stretched > room + 1f, "the pan should have stretched, but the offset is $stretched")
+
+    // Both fingers moving together: no zoom, and with two-finger panning off, no pan either. All
+    // that changes is that the gesture is now a pinch, which used to re-clamp the image.
+    onNodeWithTag(TAG).performTouchInput {
+      down(1, Offset(centerX, centerY))
+      updatePointerBy(0, Offset(0f, -5f))
+      updatePointerBy(1, Offset(0f, -5f))
+      move()
+    }
+    assertEquals(
+      stretched,
+      state.transform.offset.x,
+      absoluteTolerance = 1f,
+      message = "a pinch joining the pan should keep the stretch, not snap it away",
+    )
+
+    onNodeWithTag(TAG).performTouchInput {
+      up(0)
+      up(1)
+    }
+    waitForIdle()
+    assertEquals(room, state.transform.offset.x, absoluteTolerance = 1f)
+  }
+
+  /** A fling into the edge stretches past it and comes back exactly to the bounds. */
+  @Test
+  fun aFlingIntoTheEdgeEndsExactlyInBounds() = runComposeUiTest {
+    val state = cropState(transform = CropTransform(scale = 2f))
+    mount(state, gestures = CropGestures.All.copy(overscroll = true))
+
+    onNodeWithTag(TAG).performTouchInput {
+      down(0, Offset(centerX - 40f, centerY))
+      down(1, Offset(centerX + 40f, centerY))
+      repeat(10) {
+        updatePointerBy(0, Offset(-30f, 0f))
+        updatePointerBy(1, Offset(-30f, 0f))
+        move()
+      }
+      up(0)
+      up(1)
+    }
+    waitForIdle()
+
+    val offset = state.transform.offset
+    assertTrue(offset.x.isFinite() && offset.y.isFinite(), "the fling left a non-finite $offset")
+    // Scaled 2x the 400px image is 800px wide, so 200px either way is as far as it goes.
+    assertEquals(
+      -200f,
+      offset.x,
+      absoluteTolerance = 1f,
+      message = "the fling should end at the edge",
+    )
+    assertEquals(state.constrainedImageTransform(), state.transform)
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Harness
   // ---------------------------------------------------------------------------------------------
 
@@ -1354,6 +1480,9 @@ private val SCRIM = Offset(10f, 390f)
 /** Two fingers zoom, one finger on the scrim pans: the split a host asking for the flag wants. */
 private val SINGLE_FINGER_PAN = CropGestures(zoom = true, singleFingerPan = true)
 
+/** The same, giving at the bounds instead of stopping dead. */
+private val OVERSCROLLING_SINGLE_FINGER_PAN = SINGLE_FINGER_PAN.copy(overscroll = true)
+
 /** The scale bounds `applyImageTransform` clamps into, restated here as an independent oracle. */
 private const val MAXIMUM_SCALE = 10f
 
@@ -1425,6 +1554,14 @@ private fun TouchInjectionScope.dragBy(start: Offset, delta: Offset, touchSlop: 
   moveTo(start + breaker)
   moveTo(start + breaker + delta)
   up()
+}
+
+/** One finger from the scrim, 200px right, well past the 40px a fitted image has. Left down. */
+private fun TouchInjectionScope.stretchFromScrim(touchSlop: Float) {
+  val breaker = slopBreaker(touchSlop)
+  down(SCRIM)
+  moveTo(SCRIM + breaker)
+  moveTo(SCRIM + breaker + Offset(200f, 0f))
 }
 
 private fun TouchInjectionScope.doubleTapAt(position: Offset) {

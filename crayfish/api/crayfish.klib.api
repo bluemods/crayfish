@@ -766,8 +766,10 @@ final class com.github.skydoves.crayfish.ui/CropAccessibility { // com.github.sk
 }
 
 final class com.github.skydoves.crayfish.ui/CropGestures { // com.github.skydoves.crayfish.ui/CropGestures|null[0]
-    constructor <init>(kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ...) // com.github.skydoves.crayfish.ui/CropGestures.<init>|<init>(kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Boolean){}[0]
+    constructor <init>(kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ...) // com.github.skydoves.crayfish.ui/CropGestures.<init>|<init>(kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Boolean){}[0]
 
+    final val overscroll // com.github.skydoves.crayfish.ui/CropGestures.overscroll|{}overscroll[0]
+        final fun <get-overscroll>(): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.overscroll.<get-overscroll>|<get-overscroll>(){}[0]
     final val pan // com.github.skydoves.crayfish.ui/CropGestures.pan|{}pan[0]
         final fun <get-pan>(): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.pan.<get-pan>|<get-pan>(){}[0]
     final val rotate // com.github.skydoves.crayfish.ui/CropGestures.rotate|{}rotate[0]
@@ -781,7 +783,8 @@ final class com.github.skydoves.crayfish.ui/CropGestures { // com.github.skydove
     final fun component2(): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.component2|component2(){}[0]
     final fun component3(): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.component3|component3(){}[0]
     final fun component4(): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.component4|component4(){}[0]
-    final fun copy(kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ...): com.github.skydoves.crayfish.ui/CropGestures // com.github.skydoves.crayfish.ui/CropGestures.copy|copy(kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Boolean){}[0]
+    final fun component5(): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.component5|component5(){}[0]
+    final fun copy(kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ...): com.github.skydoves.crayfish.ui/CropGestures // com.github.skydoves.crayfish.ui/CropGestures.copy|copy(kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Boolean){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // com.github.skydoves.crayfish.ui/CropGestures.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.github.skydoves.crayfish.ui/CropGestures.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.github.skydoves.crayfish.ui/CropGestures.toString|toString(){}[0]
