@@ -1,6 +1,6 @@
 [versions]
 coil = "3.3.0"
-agp = "9.4.0"
+agp = "9.4.1"
 kotlin = "2.4.20"
 compose-plugin = "1.12.0"
 dokka = "2.2.0"
