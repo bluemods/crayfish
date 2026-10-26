@@ -46,15 +46,27 @@ import androidx.compose.runtime.Immutable
  * @property zoom Whether pinching scales the image, and whether a double tap zooms.
  * @property rotate Whether twisting two fingers turns the image. Independent of
  *   [CropState.rotateBy], which a toolbar can always call.
+ * @property singleFingerPan Whether one finger that lands outside the crop rectangle, on no handle,
+ *   drags the image. Independent of [pan], so a host can keep two fingers for zooming alone and
+ *   still let the image be moved. A finger that lands on a handle or inside the frame still
+ *   belongs to the frame, so nothing about resizing changes.
+ *   Turning it on also changes what the image is held to: instead of the viewport, the image may
+ *   slide anywhere that keeps the crop frame covered, so it can be panned at the fitted zoom
+ *   rather than only once zoomed in. Two-finger panning follows the same rule while it is on.
  */
 @Immutable
 public data class CropGestures(
   val pan: Boolean = false,
   val zoom: Boolean = false,
   val rotate: Boolean = false,
+  val singleFingerPan: Boolean = false,
 ) {
 
-  /** Whether any gesture addresses the image at all. */
+  /**
+   * Whether any two-finger gesture addresses the image. [singleFingerPan] is deliberately not part
+   * of it: this is what decides whether a second finger is claimed, and with only one-finger
+   * panning live a pinch would be claimed for nothing and kept from an ancestor that could use it.
+   */
   internal val movesImage: Boolean get() = pan || zoom || rotate
 
   public companion object {

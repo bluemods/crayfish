@@ -282,6 +282,15 @@ internal class RealCropState(
     internal set
 
   /**
+   * Whether [constrainImageToViewport] holds the image to the crop frame rather than the viewport.
+   *
+   * Written by the gesture node from [CropGestures.singleFingerPan]. Held to the viewport, a fitted
+   * image has nowhere to go and a one-finger pan would do nothing until the user zoomed in; held to
+   * the frame it can slide as far as the frame stays covered, which is what that gesture is for.
+   */
+  internal var holdsImageToFrame: Boolean = false
+
+  /**
    * The crop rectangle as fractions of the viewport.
    *
    * Stored normalised because the viewport it was measured in may never exist again: the device
@@ -580,7 +589,8 @@ internal class RealCropState(
   }
 
   /**
-   * The rectangle the crop frame is allowed to occupy: the image as it is currently drawn.
+   * The rectangle the crop frame is allowed to occupy: the image as it is currently drawn, and of
+   * that only the part inside the viewport.
    *
    * The invariant is "the frame is inside the image", and the frame is what yields to it. It used
    * to be the other way round, with the image moved and zoomed until it covered the frame, and that
@@ -593,8 +603,29 @@ internal class RealCropState(
    * covers, found by bisection on [CropCoverage.covers] rather than by a closed form: the predicate
    * is the one the rest of the geometry already agrees with, and twenty halvings settle it to well
    * under a pixel.
+   *
+   * The viewport cut matters whenever the image reaches past the screen: always once zoomed in, and
+   * at the fitted zoom too under [holdsImageToFrame], which lets the image slide partly off. Without
+   * it the frame could be dragged after the image, out of sight, and a frame nobody can see the
+   * edges of cannot be adjusted back.
    */
   internal val frameBounds: FloatRect
+    get() {
+      val viewport = FloatRect.of(viewportSize)
+      val image = coveredImageBounds
+      val visible = FloatRect(
+        left = maxOf(image.left, viewport.left),
+        top = maxOf(image.top, viewport.top),
+        right = minOf(image.right, viewport.right),
+        bottom = minOf(image.bottom, viewport.bottom),
+      )
+      // Empty only for an image entirely off the screen, which the holds never allow at rest. Some
+      // bounds are better than none there, and the image's own are the ones that keep it covered.
+      return if (visible.isEmpty) image else visible
+    }
+
+  /** [frameBounds] before the viewport cut: the largest frame the drawn image still covers. */
+  private val coveredImageBounds: FloatRect
     get() {
       val space = coordinateSpace
       if (viewportSize.isEmpty || imageSize.width <= 0 || !space.isValid) {
@@ -644,6 +675,10 @@ internal class RealCropState(
    * the photo is larger than the viewport slides until its edge meets the edge, and an axis where
    * it is smaller stays centred. That is `coerceOffset` with the viewport as the region to cover,
    * rather than the crop frame.
+   *
+   * Under [holdsImageToFrame] the region is the crop frame instead: the photo may slide partly off
+   * the screen, but never so far that the frame is left uncovered, so the frame never has to move
+   * to follow it.
    */
   internal fun constrainImageToViewport() {
     if (viewportSize.isEmpty || imageSize.width <= 0) return
@@ -658,11 +693,17 @@ internal class RealCropState(
     } else {
       transform.copy(scale = clampedScale)
     }
+    val frame = cropRect
+    val coverRegion = if (holdsImageToFrame && frame.isFinite && !frame.isEmpty) {
+      frame
+    } else {
+      FloatRect.of(viewportSize)
+    }
     val placed = scaled.copy(
       offset = CropBounds.coerceOffset(
         transform = scaled,
         contentBounds = space.contentBounds,
-        coverRegion = FloatRect.of(viewportSize),
+        coverRegion = coverRegion,
       ),
     )
     if (placed != transform) transform = placed

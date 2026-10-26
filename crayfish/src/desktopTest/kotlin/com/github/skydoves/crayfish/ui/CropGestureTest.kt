@@ -1056,6 +1056,192 @@ class CropGestureTest {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // 18. Single-finger pan
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * With [CropGestures.singleFingerPan] on, the scrim stops being dead space and drags the image.
+   *
+   * Two-finger panning is deliberately off here: the flag exists for hosts that want two fingers
+   * for zooming alone, so it must not depend on [CropGestures.pan].
+   */
+  @Test
+  fun oneFingerOnTheScrimPansTheImageWhenSingleFingerPanIsOn() = runComposeUiTest {
+    val state = cropState(transform = CropTransform(scale = 2f))
+    mount(state, gestures = SINGLE_FINGER_PAN)
+
+    val cropBefore = state.cropRect
+    val offsetBefore = state.transform.offset
+    val delta = Offset(30f, -30f)
+    onNodeWithTag(TAG).performTouchInput { dragBy(SCRIM, delta, touchSlop) }
+    // Read before a frame is allowed to run, for the same reason as the two-finger pan: the drag
+    // ends in a fling, and this assertion is about the drag.
+    assertEquals(
+      offsetBefore.x + delta.x,
+      state.transform.offset.x,
+      absoluteTolerance = 1f,
+      message = "a one-finger pan on the scrim should move the image by as much horizontally",
+    )
+    assertEquals(
+      offsetBefore.y + delta.y,
+      state.transform.offset.y,
+      absoluteTolerance = 1f,
+      message = "a one-finger pan on the scrim should move the image by as much vertically",
+    )
+    assertRect(cropBefore, state.cropRect)
+    waitForIdle()
+  }
+
+  /**
+   * At the fitted zoom there is no slack against the viewport, so the flag holds the image to the
+   * crop frame instead. The image slides until the frame meets its edge, and the frame stays put.
+   */
+  @Test
+  fun aFittedImagePansUntilTheFrameMeetsItsEdge() = runComposeUiTest {
+    val state = cropState()
+    mount(state, gestures = SINGLE_FINGER_PAN)
+
+    val cropBefore = state.cropRect
+    // The 1000px image fits the 400px viewport exactly, and the frame sits 40px in from each edge,
+    // so 40px is as far as the image can go before the frame would be uncovered.
+    val room = cropBefore.left
+    onNodeWithTag(TAG).performTouchInput { dragBy(SCRIM, Offset(25f, 0f), touchSlop) }
+    assertEquals(
+      25f,
+      state.transform.offset.x,
+      absoluteTolerance = 1f,
+      message = "a fitted image should pan while the frame still has room",
+    )
+    waitForIdle()
+
+    // The edge is a hard stop, even while the finger is still down.
+    val breaker = slopBreaker(touchSlop)
+    onNodeWithTag(TAG).performTouchInput {
+      down(SCRIM)
+      moveTo(SCRIM + breaker)
+      moveTo(SCRIM + breaker + Offset(200f, 0f))
+    }
+    assertEquals(
+      room,
+      state.transform.offset.x,
+      absoluteTolerance = 1f,
+      message = "the image should stop where its left edge meets the frame",
+    )
+    onNodeWithTag(TAG).performTouchInput { up() }
+    waitForIdle()
+    assertRect(cropBefore, state.cropRect)
+  }
+
+  /** The flag hands the image only what the frame had no claim to. */
+  @Test
+  fun aDragInsideTheFrameStillMovesTheRectangleWithSingleFingerPanOn() = runComposeUiTest {
+    val state = cropState(transform = CropTransform(scale = 2f))
+    mount(state, gestures = SINGLE_FINGER_PAN)
+
+    val transformBefore = state.transform
+    val cropBefore = state.cropRect
+    onNodeWithTag(TAG).performTouchInput {
+      dragBy(Offset(centerX, centerY), Offset(30f, 30f), touchSlop)
+    }
+    waitForIdle()
+
+    assertEquals(transformBefore, state.transform, "a drag inside the frame must not pan")
+    assertTrue(
+      state.cropRect != cropBefore,
+      "the drag should have moved the crop rectangle, but it stayed at $cropBefore",
+    )
+  }
+
+  /** A finger that addresses nothing must not raise the OnTouch grid. */
+  @Test
+  fun aDragOnTheScrimRaisesNoGridWhenItHasNothingToMove() = runComposeUiTest {
+    val state = cropState()
+    mount(state)
+
+    onNodeWithTag(TAG).performTouchInput {
+      down(SCRIM)
+      moveBy(Offset(60f, -60f))
+    }
+    waitForIdle()
+    assertFalse(state.isInteracting, "a drag on the scrim moves nothing, so shows no grid")
+
+    onNodeWithTag(TAG).performTouchInput { up() }
+    waitForIdle()
+  }
+
+  /** With one-finger panning on, the grid waits for the pan to start, so a tap cannot flash it. */
+  @Test
+  fun theGridAppearsOnceAOneFingerPanStartsAndNotBefore() = runComposeUiTest {
+    val state = cropState(transform = CropTransform(scale = 2f))
+    mount(state, gestures = SINGLE_FINGER_PAN)
+
+    onNodeWithTag(TAG).performTouchInput { down(SCRIM) }
+    waitForIdle()
+    assertFalse(state.isInteracting, "a finger that has not travelled is still only a tap")
+
+    // The event that spends the slop moves nothing; the one after it is the first real pan.
+    onNodeWithTag(TAG).performTouchInput { moveBy(slopBreaker(touchSlop)) }
+    waitForIdle()
+    assertFalse(state.isInteracting, "nothing has moved yet")
+
+    onNodeWithTag(TAG).performTouchInput { moveBy(Offset(10f, 10f)) }
+    waitForIdle()
+    assertTrue(state.isInteracting, "the pan has started")
+
+    onNodeWithTag(TAG).performTouchInput { up() }
+    waitForIdle()
+    assertFalse(state.isInteracting, "the finger has lifted")
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // 19. The frame stays on screen
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Zoomed in, the image reaches past the viewport on every side, and the frame must still stop
+   * at the viewport's edge rather than the image's.
+   */
+  @Test
+  fun aFrameCannotBeDraggedOffScreenOverAZoomedImage() = runComposeUiTest {
+    val state = cropState(transform = CropTransform(scale = 2f))
+    mount(state)
+
+    val before = state.cropRect
+    onNodeWithTag(TAG).performTouchInput {
+      dragBy(Offset(centerX, centerY), Offset(0f, -300f), touchSlop)
+    }
+    waitForIdle()
+
+    assertRect(FloatRect(before.left, 0f, before.right, before.height), state.cropRect)
+  }
+
+  /**
+   * A fitted image held to the frame can be slid partly off the screen. The frame must not then
+   * follow the image out of sight, where its edges could no longer be grabbed.
+   */
+  @Test
+  fun aFrameCannotFollowAPannedImageOffScreen() = runComposeUiTest {
+    val state = cropState()
+    mount(state, gestures = SINGLE_FINGER_PAN)
+
+    // Up as far as the frame allows: the image's top edge is now 40px above the viewport.
+    onNodeWithTag(TAG).performTouchInput { dragBy(SCRIM, Offset(0f, -100f), touchSlop) }
+    waitForIdle()
+    assertTrue(
+      state.transform.offset.y < -1f,
+      "the image should have slid up, but its offset is ${state.transform.offset}",
+    )
+
+    val before = state.cropRect
+    onNodeWithTag(TAG).performTouchInput {
+      dragBy(Offset(centerX, centerY), Offset(0f, -300f), touchSlop)
+    }
+    waitForIdle()
+
+    assertRect(FloatRect(before.left, 0f, before.right, before.height), state.cropRect)
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Harness
   // ---------------------------------------------------------------------------------------------
 
@@ -1066,11 +1252,15 @@ class CropGestureTest {
   private var longPressTimeout = 0L
   private var doubleTapTimeout = 0L
 
-  private fun ComposeUiTest.mount(state: RealCropState, style: CropStyle = CropStyle.Default) {
+  private fun ComposeUiTest.mount(
+    state: RealCropState,
+    style: CropStyle = CropStyle.Default,
+    gestures: CropGestures = CropGestures.All,
+  ) {
     setContent {
       readViewConfiguration()
       CompositionLocalProvider(LocalDensity provides Density(1f)) {
-        GestureSurface(state, style)
+        GestureSurface(state, style, gestures)
       }
     }
     waitForIdle()
@@ -1154,6 +1344,15 @@ private const val TAG = "cropper"
 private const val VIEWPORT = 400f
 private const val PAN_STEPS = 5
 private const val PAN_STEP = -20f
+
+/**
+ * The bottom-left scrim: 42px from the nearest corner and off the end of both nearby edges, so the
+ * hit test returns nothing at all rather than `Inside`.
+ */
+private val SCRIM = Offset(10f, 390f)
+
+/** Two fingers zoom, one finger on the scrim pans: the split a host asking for the flag wants. */
+private val SINGLE_FINGER_PAN = CropGestures(zoom = true, singleFingerPan = true)
 
 /** The scale bounds `applyImageTransform` clamps into, restated here as an independent oracle. */
 private const val MAXIMUM_SCALE = 10f

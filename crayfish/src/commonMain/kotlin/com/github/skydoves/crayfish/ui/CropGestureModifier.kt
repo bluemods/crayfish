@@ -54,6 +54,10 @@ import kotlinx.coroutines.launch
  * One finger belongs to the crop rectangle; two belong to the image. This is not the only possible
  * split, but it is the only one under which every gesture is unambiguous from its first event,
  * which is what lets the two-finger case be claimed immediately (see [detectCropGestures]).
+ *
+ * [CropGestures.singleFingerPan] relaxes that split without making anything ambiguous: a finger
+ * whose down lands on no handle has nothing of the frame's to hold, so it can be handed to the
+ * image on that same first event.
  */
 internal fun Modifier.cropGestures(
   state: RealCropState,
@@ -135,7 +139,19 @@ internal class CropGestureNode(state: RealCropState, style: CropStyle, gestures:
     this.state = state
     this.style = style
     this.gestures = gestures
+    applyImageHold()
     if (restart) pointerInput.resetPointerInputHandler()
+  }
+
+  /**
+   * Tells the state what the image is held to, and re-applies the hold when that changed: turning
+   * [CropGestures.singleFingerPan] off can leave a fitted image slid away from the centre.
+   */
+  private fun applyImageHold() {
+    if (state.holdsImageToFrame == gestures.singleFingerPan) return
+    state.holdsImageToFrame = gestures.singleFingerPan
+    state.constrainImageToViewport()
+    state.constrainFrameToImage()
   }
 
   /** Stops a fling in flight, which is what a new finger on the screen means. */
@@ -158,6 +174,10 @@ internal class CropGestureNode(state: RealCropState, style: CropStyle, gestures:
     state.constrainImageToViewport()
     state.constrainFrameToImage()
     return state.transform.offset != before
+  }
+
+  override fun onAttach() {
+    applyImageHold()
   }
 
   override fun onDetach() {
@@ -193,7 +213,6 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
 
     val down = awaitFirstDown(requireUnconsumed = false)
     node.cancelFling()
-    state.isInteracting = true
 
     // One tracker per gesture, on the centroid rather than on any single finger: with two fingers
     // down the centroid is what the image is following, and a tracker fed one finger's path would
@@ -205,6 +224,22 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
     var handle = hitTestCropHandle(state.cropRect, down.position.toFloatPoint(), touchRadius)
     var dragOrigin = state.cropRect
     var dragStart = down.position
+
+    // A finger on no handle addresses nothing yet, and may never: with one-finger panning off it
+    // is inert, and with it on it is still only a tap until it travels. Raising the OnTouch grid
+    // for it would promise an interaction that is not happening, so the flag waits until one does:
+    // here for a finger on the frame, at the claim for a pinch or a one-finger pan.
+    if (handle != null) {
+      state.isInteracting = true
+    }
+
+    // Whether this gesture has dragged the image with one finger, which entitles it to a fling
+    // even when two-finger panning is off.
+    var pannedWithOneFinger = false
+    // Whether the velocity tracker is following one finger rather than the centroid. The two sit
+    // up to half a finger spread apart, so switching between them without a reset would read the
+    // jump as a throw.
+    var trackingOneFinger = false
 
     var travelled = false
     var claimed = false
@@ -230,6 +265,7 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
           // nothing here, and consuming it anyway would take the gesture away from an ancestor
           // that could have used it while doing nothing with it.
           claimed = true
+          state.isInteracting = true
           // A crop-rect drag never continues into a two-finger gesture.
           handle = null
         }
@@ -241,6 +277,11 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
         }
 
         if (pressed >= 2 && gestures.movesImage) {
+          if (trackingOneFinger) {
+            trackingOneFinger = false
+            velocityTracker.resetTracking()
+            lastSampleMillis = Long.MIN_VALUE
+          }
           val sampleMillis = event.changes.first().uptimeMillis
           val currentCentroid = event.calculateCentroid(useCurrent = true)
           // Skip a sample whose timestamp has not advanced. A repeated timestamp is one of the two
@@ -263,10 +304,12 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
             )
           }
         } else if (pressed == 1) {
-          // One finger is the crop rectangle's. The image deliberately does not move under a single
+          // One finger is the crop rectangle's. By default the image does not move under a single
           // pointer: that is what leaves every part of the screen free to mean "adjust the frame".
-          val position = event.changes.first().position
-          if (!travelled && (position - down.position).getDistance() > touchSlop) {
+          val change = event.changes.first { it.pressed }
+          val position = change.position
+          val crossedSlop = !travelled && (position - down.position).getDistance() > touchSlop
+          if (crossedSlop) {
             travelled = true
             // Re-freeze once, here rather than at the down, so the drag does not open with a jump
             // of one slop. Everything after this recomputes from these two values and nothing else.
@@ -282,6 +325,35 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
               totalDelta = (position - dragStart).toFloatPoint(),
               minimumSize = minimumSize,
             )
+          } else if (travelled && handle == null && gestures.singleFingerPan) {
+            // A finger on no handle, or the one left behind when a pinch loses a finger. Claimed
+            // like a pinch, so an ancestor that also drags does not take the gesture half way.
+            claimed = true
+            event.changes.fastForEach { if (!it.isConsumed) it.consume() }
+            // The finger's own travel since the last event, never the centroid's: on the frame a
+            // pinch drops to one finger the previous centroid is the midpoint of two, and panning
+            // by the difference would throw the image half the distance between them. The frame
+            // that crosses slop is skipped for the same reason a crop drag re-freezes there, and
+            // that skipped frame is also what lets a pinch whose fingers lift one after the other
+            // keep the centroid's velocity for its fling.
+            if (!crossedSlop && change.previousPressed) {
+              if (!trackingOneFinger) {
+                trackingOneFinger = true
+                velocityTracker.resetTracking()
+                lastSampleMillis = Long.MIN_VALUE
+              }
+              if (change.uptimeMillis > lastSampleMillis) {
+                lastSampleMillis = change.uptimeMillis
+                velocityTracker.addPosition(change.uptimeMillis, position)
+              }
+              pannedWithOneFinger = true
+              val delta = (position - change.previousPosition).toFloatPoint()
+              // The grid waits for the image to actually move. A pan against an image with no room
+              // to go is still nothing happening, and the grid would say otherwise.
+              if (applyImagePan(state, delta)) {
+                state.isInteracting = true
+              }
+            }
           }
         }
       }
@@ -302,9 +374,9 @@ private suspend fun PointerInputScope.detectCropGestures(node: CropGestureNode) 
         previousTapPosition = down.position
       }
 
-      // A fling is panning carried on after the fingers leave, so it is the pan flag that gates
+      // A fling is panning carried on after the fingers leave, so it is the pan flags that gate
       // it, not the claim.
-      if (claimed && gestures.pan) {
+      if (claimed && (gestures.pan || pannedWithOneFinger)) {
         // The bounded overload, and then `finiteVelocity` inside the fling: the clamp handles a
         // velocity that is merely enormous, the guard handles one that is NaN.
         node.startFling(velocityTracker.calculateVelocity(FLING_LIMIT))
@@ -351,6 +423,19 @@ private fun applyImageTransform(
   state.constrainImageToViewport()
   state.constrainFrameToImage()
   return nextRaw
+}
+
+/**
+ * Drags the image by [delta] with one finger, under the same constraints as a two-finger pan.
+ *
+ * @return whether the image actually moved.
+ */
+private fun applyImagePan(state: RealCropState, delta: FloatPoint): Boolean {
+  val before = state.transform.offset
+  state.transform = state.transform.copy(offset = before + delta.sanitized()).sanitized()
+  state.constrainImageToViewport()
+  state.constrainFrameToImage()
+  return state.transform.offset != before
 }
 
 /** Resizes or moves the crop rectangle and writes it back as fractions of the viewport. */
